@@ -1,0 +1,21 @@
+{
+  "name": "pi-file-peek",
+  "version": "0.1.0",
+  "description": "Browse recently referenced files in pi, then press e to open one in your editor",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "file-viewer"
+  ],
+  "author": "Thomas Hennebert",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/file-peek.ts"
+    ]
+  }
+}
