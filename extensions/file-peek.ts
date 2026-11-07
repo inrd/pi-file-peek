@@ -738,15 +738,38 @@ function editorSpec(absPath: string, line: number): { command: string; args: str
 	const parts = splitCommandLine(raw);
 	const command = parts[0] || "vim";
 	const baseArgs = parts.slice(1);
-	const name = basename(command).toLowerCase();
+	// Strip Windows launcher extensions so `code.cmd` or `idea64.exe` match too.
+	const name = basename(command)
+		.toLowerCase()
+		.replace(/\.(exe|cmd|bat|sh)$/, "");
 
-	if (name === "code" || name === "code-insiders" || name === "codium") {
-		return { command, args: [...baseArgs, "--goto", `${absPath}:${line}`] };
+	switch (editorStyle(name)) {
+		case "goto":
+			return { command, args: [...baseArgs, "--goto", `${absPath}:${line}`] };
+		case "colon":
+			return { command, args: [...baseArgs, `${absPath}:${line}`] };
+		case "line-flag":
+			return { command, args: [...baseArgs, "--line", String(line), absPath] };
+		case "mate":
+			return { command, args: [...baseArgs, "-l", String(line), absPath] };
+		default:
+			// vim, nvim, emacs, nano, micro, kak, joe, ... all accept +LINE.
+			return { command, args: [...baseArgs, `+${line}`, absPath] };
 	}
-	if (name === "hx" || name === "helix") {
-		return { command, args: [...baseArgs, `${absPath}:${line}`] };
+}
+
+/** How an editor wants to be told the line to open at. */
+function editorStyle(name: string): "goto" | "colon" | "line-flag" | "mate" | "plus" {
+	// VS Code and its forks.
+	if (["code", "code-insiders", "codium", "vscodium", "cursor", "windsurf"].includes(name)) return "goto";
+	// path:line.
+	if (["hx", "helix", "subl", "sublime_text", "zed", "zeditor"].includes(name)) return "colon";
+	// JetBrains launchers: --line N path.
+	if (/^(idea|pycharm|webstorm|phpstorm|goland|clion|rubymine|rider|rustrover|datagrip|studio)(64)?$/.test(name)) {
+		return "line-flag";
 	}
-	return { command, args: [...baseArgs, `+${line}`, absPath] };
+	if (name === "mate") return "mate";
+	return "plus";
 }
 
 async function runEditor(ctx: ExtensionContext, absPath: string, line: number): Promise<boolean> {

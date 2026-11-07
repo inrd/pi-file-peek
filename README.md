@@ -81,8 +81,17 @@ that contain spaces:
 export FILE_PEEK_EDITOR="'/Applications/My Editor.app/Contents/MacOS/editor' --wait"
 ```
 
-`code`/`code-insiders`/`codium` are opened with `--goto path:line`, `hx`/`helix`
-with `path:line`, everything else with `+line path`. For GUI editors that detach
+The line is passed in the form each editor expects:
+
+| Editor | Arguments |
+|---|---|
+| `code`, `code-insiders`, `codium`, `cursor`, `windsurf` | `--goto path:line` |
+| `hx`/`helix`, `subl`, `zed` | `path:line` |
+| JetBrains launchers (`idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rider`, ...) | `--line line path` |
+| `mate` | `-l line path` |
+| anything else (`vim`, `nvim`, `emacs`, `nano`, `micro`, `kak`, ...) | `+line path` |
+
+`.exe`/`.cmd` suffixes are ignored when matching names. For GUI editors that detach
 immediately, add their wait flag (for example `code --wait`) if you want pi to
 stay suspended until the window closes.
 
