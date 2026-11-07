@@ -36,6 +36,9 @@ pi -e ./extensions/file-peek.ts
 | `/peek last` | open the most recent reference |
 | `/peek path[:line]` | open a file directly (`~/` is expanded, `path#L12` works too) |
 
+After `/peek `, autocomplete suggests `last` and the session's recent
+references as `path:line`; type part of a path to filter them.
+
 ### Shortcut (optional)
 
 No key is bound by default. Pi's `keybindings.json` cannot bind extension

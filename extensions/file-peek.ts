@@ -27,9 +27,10 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
-import type { Component, KeyId, TUI } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, Component, KeyId, TUI } from "@earendil-works/pi-tui";
 import {
 	decodeKittyPrintable,
+	fuzzyFilter,
 	matchesKey,
 	replaceControlCharacters,
 	sliceByColumn,
@@ -1089,6 +1090,34 @@ function formatRef(ref: FileRef): string {
 	return `${ref.displayPath}:${ref.line}  · ${ref.source}`;
 }
 
+/**
+ * `/peek` argument for a ref. The whole argument is one path, so paths with
+ * spaces need no quoting; parseTarget reads it back unchanged.
+ */
+function refArgument(ref: FileRef): string {
+	return `${ref.displayPath}:${ref.line}`;
+}
+
+/**
+ * Suggestions for `/peek <prefix>`: `last`, then recent references as
+ * `path:line`, fuzzy-matched on the path like Pi's own completions.
+ */
+function peekCompletions(prefix: string, refs: FileRef[]): AutocompleteItem[] | null {
+	const query = prefix.trim();
+	const items: AutocompleteItem[] = [];
+
+	if (refs.length > 0 && "last".startsWith(query)) {
+		const latest = refs[0];
+		items.push({ value: "last", label: "last", description: `${refArgument(latest)} · ${latest.source}` });
+	}
+
+	const matches = query ? fuzzyFilter(refs, query, refArgument) : refs;
+	for (const ref of matches) {
+		items.push({ value: refArgument(ref), label: refArgument(ref), description: ref.source });
+	}
+	return items.length > 0 ? items : null;
+}
+
 /** The viewer is a TUI overlay; every entry point checks this once. */
 function requireTui(ctx: ExtensionContext): boolean {
 	if (ctx.mode === "tui") return true;
@@ -1115,8 +1144,38 @@ async function openPicker(ctx: ExtensionContext): Promise<void> {
 }
 
 export default function filePeekExtension(pi: ExtensionAPI) {
+	// Completion callbacks only get the typed prefix, so remember the current
+	// session's context. Pi re-runs this factory for every new/resumed/forked
+	// session, and session_shutdown clears it so a stale context is never read.
+	let sessionCtx: ExtensionContext | undefined;
+	let cachedRefs: { leafId: string | null; refs: FileRef[] } | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		sessionCtx = ctx;
+		cachedRefs = undefined;
+	});
+	pi.on("session_shutdown", () => {
+		sessionCtx = undefined;
+		cachedRefs = undefined;
+	});
+
+	/** collectRefs touches the disk, so reuse it while the session is unchanged. */
+	const recentRefs = (): FileRef[] => {
+		if (!sessionCtx) return [];
+		const leafId = sessionCtx.sessionManager.getLeafId();
+		if (cachedRefs?.leafId !== leafId) cachedRefs = { leafId, refs: collectRefs(sessionCtx) };
+		return cachedRefs.refs;
+	};
+
 	pi.registerCommand("peek", {
 		description: "Browse a recently referenced file, then press e to edit it",
+		getArgumentCompletions: (prefix) => {
+			try {
+				return peekCompletions(prefix, recentRefs());
+			} catch {
+				// Never let completion break typing (e.g. a context gone stale).
+				return null;
+			}
+		},
 		handler: async (args, ctx) => {
 			if (!requireTui(ctx)) return;
 
@@ -1180,6 +1239,7 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 export const __test = {
 	collectRefs,
 	editorSpec,
+	peekCompletions,
 	shortcutFromEnv,
 	FilePeekView,
 	isValidShortcut,
