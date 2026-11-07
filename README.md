@@ -58,6 +58,13 @@ then `vim`. Arguments are allowed:
 export FILE_PEEK_EDITOR="code --wait"
 ```
 
+The value is split like a shell command line, so quote paths or arguments
+that contain spaces:
+
+```bash
+export FILE_PEEK_EDITOR="'/Applications/My Editor.app/Contents/MacOS/editor' --wait"
+```
+
 `code`/`code-insiders`/`codium` are opened with `--goto path:line`, `hx`/`helix`
 with `path:line`, everything else with `+line path`. For GUI editors that detach
 immediately, add their wait flag (for example `code --wait`) if you want pi to

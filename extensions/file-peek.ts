@@ -513,9 +513,66 @@ function languageForPath(absPath: string): string | undefined {
 	}
 }
 
+/**
+ * Split an editor command line into argv the way a POSIX shell would for the
+ * simple cases: whitespace separates words, '...' is literal, "..." allows
+ * backslash escapes of " and \, and a backslash outside quotes escapes the
+ * next whitespace, quote, or backslash. Other backslashes are kept as-is so
+ * Windows paths survive. No variable expansion or globbing.
+ */
+function splitCommandLine(input: string): string[] {
+	const words: string[] = [];
+	let current = "";
+	let inWord = false;
+	let quote: "'" | '"' | undefined;
+
+	for (let i = 0; i < input.length; i++) {
+		const ch = input[i];
+
+		if (quote === "'") {
+			if (ch === "'") quote = undefined;
+			else current += ch;
+			continue;
+		}
+
+		if (quote === '"') {
+			if (ch === '"') {
+				quote = undefined;
+			} else if (ch === "\\" && (input[i + 1] === '"' || input[i + 1] === "\\")) {
+				current += input[++i];
+			} else {
+				current += ch;
+			}
+			continue;
+		}
+
+		if (/\s/.test(ch)) {
+			if (inWord) {
+				words.push(current);
+				current = "";
+				inWord = false;
+			}
+			continue;
+		}
+
+		inWord = true;
+		if (ch === "'" || ch === '"') {
+			quote = ch;
+		} else if (ch === "\\" && i + 1 < input.length && /[\s'"\\]/.test(input[i + 1])) {
+			current += input[++i];
+		} else {
+			current += ch;
+		}
+	}
+
+	// An unterminated quote just runs to the end of the string.
+	if (inWord) words.push(current);
+	return words;
+}
+
 function editorSpec(absPath: string, line: number): { command: string; args: string[] } {
 	const raw = (process.env.FILE_PEEK_EDITOR || process.env.VISUAL || process.env.EDITOR || "vim").trim();
-	const parts = raw.split(/\s+/).filter(Boolean);
+	const parts = splitCommandLine(raw);
 	const command = parts[0] || "vim";
 	const baseArgs = parts.slice(1);
 	const name = basename(command).toLowerCase();
