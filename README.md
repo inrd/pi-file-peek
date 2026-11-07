@@ -13,7 +13,7 @@ editor; pi suspends while it runs and reopens the viewer afterwards.
 ## Install
 
 ```bash
-pi install git:github.com/inrd/pi-file-peek@v0.1.0
+pi install git:github.com/inrd/pi-file-peek@v0.2.0
 ```
 
 Or try it for a single run without touching settings:

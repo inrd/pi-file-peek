@@ -1,6 +1,6 @@
 {
   "name": "pi-file-peek",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browse recently referenced files in pi, then press e to open one in your editor",
   "license": "MIT",
   "type": "module",
