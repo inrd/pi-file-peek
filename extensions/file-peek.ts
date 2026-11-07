@@ -720,14 +720,15 @@ async function openViewer(ctx: ExtensionContext, initial: FileRef): Promise<void
 
 		if (!result || result.action === "close") return;
 
-		const editLine = result.line ?? line;
-		const edited = await runEditor(ctx, initial.absPath, editLine);
+		// Remember the selected line first so the viewer reopens there whether or
+		// not the editor starts.
+		line = result.line ?? line;
+		const edited = await runEditor(ctx, initial.absPath, line);
 		if (!edited) {
 			// The editor failed to start; keep the viewer open at the same place.
 			continue;
 		}
 
-		line = editLine;
 		try {
 			file = await loadFile(initial.absPath);
 		} catch (caught) {
