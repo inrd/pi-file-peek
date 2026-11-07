@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
-import { __test } from "../extensions/file-peek.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import filePeekExtension, { __test } from "../extensions/file-peek.ts";
 
 const { editorSpec, isValidShortcut, shortcutFromEnv, splitCommandLine } = __test;
 
@@ -72,6 +73,58 @@ describe("shortcutFromEnv", () => {
 
 	test("typos are reported, not registered", () => {
 		assert.deepEqual(shortcutFromEnv("ctrl+qq"), { kind: "invalid", value: "ctrl+qq" });
+	});
+});
+
+describe("FILE_PEEK_SHORTCUT at load time", () => {
+	const saved = process.env.FILE_PEEK_SHORTCUT;
+	afterEach(() => {
+		if (saved === undefined) delete process.env.FILE_PEEK_SHORTCUT;
+		else process.env.FILE_PEEK_SHORTCUT = saved;
+	});
+
+	/** Load the extension against a stub API and fire session_start. */
+	async function load(value: string | undefined, reason: string, hasUI = true) {
+		if (value === undefined) delete process.env.FILE_PEEK_SHORTCUT;
+		else process.env.FILE_PEEK_SHORTCUT = value;
+		const shortcuts: string[] = [];
+		const handlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
+		const api = {
+			registerCommand() {},
+			registerShortcut: (key: string) => shortcuts.push(key),
+			on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+				if (event === "session_start") handlers.push(handler);
+			},
+		} as unknown as ExtensionAPI;
+		filePeekExtension(api);
+
+		const notes: string[] = [];
+		const ctx = { hasUI, ui: { notify: (message: string, type: string) => notes.push(`${type}: ${message}`) } };
+		for (const handler of handlers) await handler({ type: "session_start", reason }, ctx);
+		return { shortcuts, notes };
+	}
+
+	test("a valid key is registered silently", async () => {
+		assert.deepEqual(await load("ctrl+q", "startup"), { shortcuts: ["ctrl+q"], notes: [] });
+	});
+
+	test("unset registers nothing and says nothing", async () => {
+		assert.deepEqual(await load(undefined, "startup"), { shortcuts: [], notes: [] });
+	});
+
+	test("a typo is shown in the UI at startup and reload", async () => {
+		for (const reason of ["startup", "reload"]) {
+			const { shortcuts, notes } = await load("ctrl+qq", reason);
+			assert.deepEqual(shortcuts, []);
+			assert.equal(notes.length, 1);
+			assert.match(notes[0], /^warning: .*FILE_PEEK_SHORTCUT "ctrl\+qq"/);
+		}
+	});
+
+	test("a typo is not repeated on new/resume/fork", async () => {
+		for (const reason of ["new", "resume", "fork"]) {
+			assert.deepEqual((await load("ctrl+qq", reason)).notes, []);
+		}
 	});
 });
 

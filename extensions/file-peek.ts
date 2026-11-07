@@ -1151,7 +1151,16 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 	// keybindings.json cannot bind extension commands, so offer an opt-in.
 	const shortcut = shortcutFromEnv(process.env.FILE_PEEK_SHORTCUT);
 	if (shortcut.kind === "invalid") {
-		console.warn(`[file-peek] Ignoring invalid FILE_PEEK_SHORTCUT "${shortcut.value}"; no shortcut registered.`);
+		const message = `file-peek: ignoring invalid FILE_PEEK_SHORTCUT "${shortcut.value}"; no shortcut registered.`;
+		// The factory runs before the UI exists and console output is hidden in
+		// the TUI, so report it once the session has a UI. Pi re-runs the factory
+		// (and this handler) on reload/new/resume, so it shows again only when
+		// the setting is re-read.
+		pi.on("session_start", (event, ctx) => {
+			if (event.reason !== "startup" && event.reason !== "reload") return;
+			if (ctx.hasUI) ctx.ui.notify(message, "warning");
+			else console.warn(message);
+		});
 	} else if (shortcut.kind === "key") {
 		// Pi reports conflicts with built-in bindings at startup.
 		pi.registerShortcut(shortcut.key, {
