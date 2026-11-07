@@ -126,3 +126,14 @@ pi -e ./extensions/file-peek.ts
 ```
 
 After changing it, `/reload` in a running session picks it up.
+
+Typecheck and tests (Node 22.18+ runs the TypeScript tests directly):
+
+```bash
+npm install
+npm run check        # tsc --noEmit, then node --test
+```
+
+The Pi packages are dev dependencies pinned to the version the extension
+was last checked against; bump them to catch API changes in newer Pi
+releases.

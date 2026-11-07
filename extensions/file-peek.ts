@@ -1159,3 +1159,18 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 		});
 	}
 }
+
+/**
+ * Internals exposed for the test suite (test/*.test.ts). Pi only uses the
+ * default export, so this is not part of the extension's API.
+ */
+export const __test = {
+	collectRefs,
+	editorSpec,
+	FilePeekView,
+	isValidShortcut,
+	overlayRowBudget,
+	parseTarget,
+	resolveExistingToolPath,
+	splitCommandLine,
+};

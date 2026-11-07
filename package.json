@@ -3,15 +3,32 @@
   "version": "0.1.0",
   "description": "Browse recently referenced files in pi, then press e to open one in your editor",
   "license": "MIT",
+  "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
     "file-viewer"
   ],
   "author": "Thomas Hennebert",
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@earendil-works/pi-tui": "^1.5.0",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   },
   "pi": {
     "extensions": [
