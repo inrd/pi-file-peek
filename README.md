@@ -35,7 +35,23 @@ pi -e ./extensions/file-peek.ts
 | `/peek` | pick from files referenced in this session |
 | `/peek last` | open the most recent reference |
 | `/peek path[:line]` | open a file directly (`~/` is expanded) |
-| `ctrl+shift+o` | open the recent-reference picker |
+| `alt+o` | open the recent-reference picker |
+
+### Shortcut
+
+The picker shortcut defaults to `alt+o`, which Pi does not use and which works
+in any terminal. On macOS, set Option to act as Meta ("Use Option as Meta key"
+in Terminal, "Esc+" in iTerm2); Pi's own `alt+…` bindings need the same.
+
+To use another key, or none:
+
+```bash
+export FILE_PEEK_SHORTCUT="ctrl+shift+o"   # needs a Kitty-protocol terminal
+export FILE_PEEK_SHORTCUT=none
+```
+
+Pi prints a warning at startup if the chosen key clashes with a built-in
+binding. An unrecognised key name falls back to `alt+o` with a warning.
 
 ### Viewer keys
 
