@@ -40,6 +40,8 @@ import {
 const MAX_FILE_BYTES = 1_500_000;
 const MAX_FILE_LINES = 12_000;
 const MAX_REFS = 40;
+/** Most recent distinct lines kept per file, so one file cannot fill the picker. */
+const MAX_REFS_PER_FILE = 3;
 /** Path-like tokens tried per tool-result block, whether or not they resolve. */
 const MAX_OBSERVED_TOKENS = 500;
 /** Resolved paths observed per tool-result block. */
@@ -529,24 +531,31 @@ function collectRefs(ctx: ExtensionContext): FileRef[] {
 		}
 	}
 
+	// If prose gave us specific line numbers, drop the generic line-1 mention
+	// for that file so the picker does not show a less useful duplicate. Do this
+	// before capping so the duplicate does not use up one of the file's slots.
+	const specificMentionPaths = new Set(
+		refs.filter((ref) => ref.source === "mention" && ref.line > 1).map((ref) => ref.absPath),
+	);
+
 	const unique: FileRef[] = [];
 	const seen = new Set<string>();
+	const perFile = new Map<string, number>();
 	for (let i = refs.length - 1; i >= 0 && unique.length < MAX_REFS; i--) {
 		const ref = refs[i];
+		if (ref.source === "mention" && ref.line === 1 && specificMentionPaths.has(ref.absPath)) continue;
+
 		const key = `${ref.absPath}\0${ref.line}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
+
+		// Newest first, so the kept lines are the file's most recent references.
+		const count = perFile.get(ref.absPath) ?? 0;
+		if (count >= MAX_REFS_PER_FILE) continue;
+		perFile.set(ref.absPath, count + 1);
 		unique.push(ref);
 	}
-
-	// If prose gave us specific line numbers, drop the generic line-1 mention
-	// for that file so the picker does not show a less useful duplicate.
-	const specificMentionPaths = new Set(
-		unique.filter((ref) => ref.source === "mention" && ref.line > 1).map((ref) => ref.absPath),
-	);
-	return unique.filter(
-		(ref) => !(ref.source === "mention" && ref.line === 1 && specificMentionPaths.has(ref.absPath)),
-	);
+	return unique;
 }
 
 function parseTarget(input: string, cwd: string): FileRef | undefined {
