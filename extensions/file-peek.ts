@@ -1087,12 +1087,14 @@ function formatRef(ref: FileRef): string {
 	return `${ref.displayPath}:${ref.line}  · ${ref.source}`;
 }
 
-async function openPicker(ctx: ExtensionContext): Promise<void> {
-	if (ctx.mode !== "tui") {
-		ctx.ui.notify("peek requires interactive mode", "error");
-		return;
-	}
+/** The viewer is a TUI overlay; every entry point checks this once. */
+function requireTui(ctx: ExtensionContext): boolean {
+	if (ctx.mode === "tui") return true;
+	ctx.ui.notify("peek requires interactive mode", "error");
+	return false;
+}
 
+async function openPicker(ctx: ExtensionContext): Promise<void> {
 	const refs = collectRefs(ctx);
 	if (refs.length === 0) {
 		ctx.ui.notify("No file references found in this session yet.", "info");
@@ -1114,10 +1116,7 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 	pi.registerCommand("peek", {
 		description: "Browse a recently referenced file, then press e to edit it",
 		handler: async (args, ctx) => {
-			if (ctx.mode !== "tui") {
-				ctx.ui.notify("peek requires interactive mode", "error");
-				return;
-			}
+			if (!requireTui(ctx)) return;
 
 			const input = args.trim();
 			if (!input) {
@@ -1154,6 +1153,7 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 		pi.registerShortcut(key as KeyId, {
 			description: "Peek a recent file reference",
 			handler: async (ctx) => {
+				if (!requireTui(ctx)) return;
 				await openPicker(ctx);
 			},
 		});
