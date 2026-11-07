@@ -40,6 +40,12 @@ import {
 const MAX_FILE_BYTES = 1_500_000;
 const MAX_FILE_LINES = 12_000;
 const MAX_REFS = 40;
+/** Files up to this many lines are highlighted in one pass (~100 ms worst case). */
+const FULL_HIGHLIGHT_LINES = 2_000;
+/** Larger files are highlighted lazily in chunks of this many lines. */
+const HIGHLIGHT_CHUNK_LINES = 400;
+/** Lines before a chunk fed to the highlighter as context, then discarded. */
+const HIGHLIGHT_CONTEXT_LINES = 120;
 /** Most recent distinct lines kept per file, so one file cannot fill the picker. */
 const MAX_REFS_PER_FILE = 3;
 /** Path-like tokens tried per tool-result block, whether or not they resolve. */
@@ -785,7 +791,9 @@ class FilePeekView implements Component {
 	private top = 0;
 	private left = 0;
 	private maxWidth = 1;
-	private highlighted: string[] = [];
+	/** Highlighted lines, filled in chunk by chunk as they come into view. */
+	private highlighted: Array<string | undefined> = [];
+	private highlightedChunks = new Set<number>();
 	private cachedKey = "";
 	private cachedLines: string[] = [];
 
@@ -803,24 +811,46 @@ class FilePeekView implements Component {
 		this.done = done;
 		this.cursor = Math.max(0, Math.min(file.rawLines.length - 1, target.line - 1));
 		this.top = Math.max(0, this.cursor - 3);
-		this.highlight();
-	}
-
-	private highlight(): void {
-		const source = this.file.rawLines;
-		if (source.length === 0) {
-			this.highlighted = [];
-			this.maxWidth = 1;
-			return;
-		}
-
-		const lines = highlightCode(source.join("\n"), this.file.language).slice(0, source.length);
-		while (lines.length < source.length) lines.push("");
-		this.highlighted = lines;
 
 		let maxWidth = 1;
-		for (const line of source) maxWidth = Math.max(maxWidth, visibleWidth(line));
+		for (const line of file.rawLines) maxWidth = Math.max(maxWidth, visibleWidth(line));
 		this.maxWidth = maxWidth;
+		this.resetHighlight();
+	}
+
+	private resetHighlight(): void {
+		this.highlighted = new Array(this.file.rawLines.length);
+		this.highlightedChunks.clear();
+	}
+
+	private chunkSize(): number {
+		const total = this.file.rawLines.length;
+		return total <= FULL_HIGHLIGHT_LINES ? Math.max(1, total) : HIGHLIGHT_CHUNK_LINES;
+	}
+
+	/**
+	 * Highlight the chunks covering [from, to). Highlighting a whole large file
+	 * takes hundreds of milliseconds, so big files are done on demand. Each
+	 * chunk is highlighted with some preceding lines as context so constructs
+	 * that started just above it (block comments, template strings) still look
+	 * right; a construct opened further back can be off at a chunk boundary.
+	 */
+	private ensureHighlighted(from: number, to: number): void {
+		const source = this.file.rawLines;
+		const size = this.chunkSize();
+		const first = Math.floor(Math.max(0, from) / size);
+		const last = Math.floor((Math.min(source.length, to) - 1) / size);
+
+		for (let chunk = first; chunk <= last; chunk++) {
+			if (this.highlightedChunks.has(chunk)) continue;
+			const start = chunk * size;
+			const end = Math.min(source.length, start + size);
+			const contextStart = size === source.length ? start : Math.max(0, start - HIGHLIGHT_CONTEXT_LINES);
+
+			const lines = highlightCode(source.slice(contextStart, end).join("\n"), this.file.language);
+			for (let i = start; i < end; i++) this.highlighted[i] = lines[i - contextStart] ?? source[i];
+			this.highlightedChunks.add(chunk);
+		}
 	}
 
 	private contentHeight(): number {
@@ -883,6 +913,7 @@ class FilePeekView implements Component {
 		this.left = Math.max(0, Math.min(this.left, Math.max(0, this.maxWidth - codeWidth)));
 		const key = `${renderWidth}:${height}:${this.top}:${this.cursor}:${this.left}`;
 		if (this.cachedKey === key) return this.cachedLines;
+		this.ensureHighlighted(this.top, this.top + height);
 		const lines: string[] = [this.header(renderWidth)];
 
 		if (total === 0) {
@@ -948,7 +979,9 @@ class FilePeekView implements Component {
 	}
 
 	invalidate(): void {
-		this.highlight();
+		// Usually a theme change. Drop the colours; visible chunks are redone
+		// on the next render instead of re-highlighting the whole file now.
+		this.resetHighlight();
 		this.cachedKey = "";
 		this.cachedLines = [];
 	}
