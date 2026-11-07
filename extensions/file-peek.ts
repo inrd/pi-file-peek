@@ -428,19 +428,33 @@ function scanNaturalLineRefs(text: string, context: RefContext, matches: PathMat
 }
 
 /**
+ * Path-like tokens with an optional line: `path:12`, `path:12:5`, and
+ * GitHub/markdown-link anchors `path#L12`, `path#L12-L20`, `path#L12C5`.
+ * Group 1 is the path, group 2 or 3 the line. Returns a fresh /g regex so
+ * callers do not share `lastIndex` state.
+ */
+function pathTokenRegex(): RegExp {
+	return /(?:^|[\s`'"([{<|])((?:~|\.{1,2}\/|\/)?[A-Za-z0-9_.@%+\-/]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::(\d+)(?::\d+)?|#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?)?/g;
+}
+
+function tokenLine(match: RegExpExecArray): number {
+	const line = match[2] ?? match[3];
+	return line ? Number(line) : 1;
+}
+
+/**
  * Pick `path:line`-looking tokens out of prose. Resolution against known
  * base directories filters out URLs, version numbers, and other false positives.
  */
 function scanTextRefs(text: string, context: RefContext): FileRef[] {
 	const refs: FileRef[] = [];
 	const matches: PathMatch[] = [];
-	const re =
-		/(?:^|[\s`'"([{<|])((?:~|\.{1,2}\/|\/)?[A-Za-z0-9_.@%+\-/]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::(\d+))?(?::\d+)?/g;
+	const re = pathTokenRegex();
 	let match: RegExpExecArray | null;
 	while ((match = re.exec(text)) !== null) {
 		const token = match[1].replace(/^@/, "").replace(/[.,;:]+$/, "");
 		if (!token || token.includes("://") || /^https?$/i.test(token)) continue;
-		const ref = resolveTextToken(token, match[2] ? Number(match[2]) : 1, context);
+		const ref = resolveTextToken(token, tokenLine(match), context);
 		if (ref) {
 			const start = match.index + match[0].indexOf(match[1]);
 			matches.push({ ref, start, end: start + match[1].length });
@@ -460,8 +474,7 @@ function scanTextRefs(text: string, context: RefContext): FileRef[] {
  * line to the picker.
  */
 function observePathText(text: string, context: RefContext): void {
-	const re =
-		/(?:^|[\s`'"([{<|])((?:~|\.{1,2}\/|\/)?[A-Za-z0-9_.@%+\-/]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::(\d+))?(?::\d+)?/g;
+	const re = pathTokenRegex();
 	let match: RegExpExecArray | null;
 	let observed = 0;
 	let attempts = 0;
@@ -475,7 +488,7 @@ function observePathText(text: string, context: RefContext): void {
 		const token = match[1].replace(/^@/, "").replace(/[.,;:]+$/, "");
 		if (!token || token.includes("://") || /^https?$/i.test(token)) continue;
 		attempts++;
-		const ref = resolveTextToken(token, match[2] ? Number(match[2]) : 1, context);
+		const ref = resolveTextToken(token, tokenLine(match), context);
 		if (!ref) continue;
 		registerRef(ref, context);
 		observed++;
@@ -588,9 +601,10 @@ function collectRefs(ctx: ExtensionContext): FileRef[] {
 
 function parseTarget(input: string, cwd: string): FileRef | undefined {
 	const trimmed = input.trim();
-	const match = /^(.*?):(\d+)(?::\d+)?$/.exec(trimmed);
+	const match = /^(.*?)(?::(\d+)(?::\d+)?|#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?)$/.exec(trimmed);
 	const pathPart = match?.[1] ?? trimmed;
-	const line = match?.[2] ? Number(match[2]) : 1;
+	const lineText = match?.[2] ?? match?.[3];
+	const line = lineText ? Number(lineText) : 1;
 	return makeRef(pathPart, line, "peek", cwd);
 }
 
