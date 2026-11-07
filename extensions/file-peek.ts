@@ -227,8 +227,8 @@ interface RefContext {
 	cwd: string;
 	/** Candidate base dirs, most useful first. */
 	bases: string[];
-	/** Bare filenames already seen, e.g. Panel.vue -> absolute path. */
-	byBasename: Map<string, string>;
+	/** Bare filenames already seen, e.g. index.ts -> every absolute path seen with that name. */
+	byBasename: Map<string, Set<string>>;
 	/** Memoized file checks; the same candidates recur across the session. */
 	fileCache: FileCache;
 }
@@ -266,22 +266,50 @@ function baseDirsFor(absPath: string, cwd: string): string[] {
 }
 
 function registerRef(ref: FileRef, context: RefContext): void {
-	context.byBasename.set(basename(ref.absPath), ref.absPath);
+	const name = basename(ref.absPath);
+	const known = context.byBasename.get(name);
+	if (known) known.add(ref.absPath);
+	else context.byBasename.set(name, new Set([ref.absPath]));
 
 	const incoming = baseDirsFor(ref.absPath, context.cwd);
 	const incomingSet = new Set(incoming);
 	context.bases = [...incoming, ...context.bases.filter((dir) => !incomingSet.has(dir))].slice(0, 48);
 }
 
+type BasenameMatch = { kind: "found"; absPath: string } | { kind: "ambiguous" } | { kind: "unknown" };
+
+/**
+ * Match a bare name such as `index.ts` against files already seen. One
+ * candidate wins outright. With several (common in monorepos), walk the base
+ * dirs from the most recent context outwards and take the first dir that
+ * contains a candidate; if that dir holds more than one, the name is
+ * ambiguous and is skipped rather than guessed.
+ */
+function matchBasename(name: string, context: RefContext): BasenameMatch {
+	const known = context.byBasename.get(name);
+	if (!known) return { kind: "unknown" };
+	const candidates = [...known].filter((absPath) => isFileAt(absPath, context.fileCache));
+	if (candidates.length === 0) return { kind: "unknown" };
+	if (candidates.length === 1) return { kind: "found", absPath: candidates[0] };
+
+	for (const base of context.bases) {
+		const inside = candidates.filter((absPath) => isInside(base, absPath));
+		if (inside.length === 1) return { kind: "found", absPath: inside[0] };
+		if (inside.length > 1) return { kind: "ambiguous" };
+	}
+	return { kind: "ambiguous" };
+}
+
 function resolveTextToken(token: string, line: number, context: RefContext): FileRef | undefined {
 	// A bare name such as `Panel.vue` can be matched against files we
 	// already know about, regardless of which directory the prose came from.
 	if (!token.includes("/")) {
-		const known = context.byBasename.get(token);
-		if (known) {
-			const ref = refFromAbsolute(known, line, "mention", context.cwd, context.fileCache);
-			if (ref) return ref;
+		const match = matchBasename(token, context);
+		if (match.kind === "found") {
+			return refFromAbsolute(match.absPath, line, "mention", context.cwd, context.fileCache);
 		}
+		// Probing base dirs would just pick one of the candidates arbitrarily.
+		if (match.kind === "ambiguous") return undefined;
 	}
 
 	// Table cells and code snippets often use paths relative to the file being
