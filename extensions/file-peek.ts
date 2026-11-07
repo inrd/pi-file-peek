@@ -803,6 +803,16 @@ async function runEditor(ctx: ExtensionContext, absPath: string, line: number): 
 	return true;
 }
 
+const OVERLAY_MAX_HEIGHT_PERCENT = 92;
+const OVERLAY_MARGIN = 1;
+
+/** Rows the viewer overlay may use; mirrors pi-tui's maxHeight/margin clamp. */
+function overlayRowBudget(rows: number): number {
+	const maxHeight = Math.floor((rows * OVERLAY_MAX_HEIGHT_PERCENT) / 100);
+	const available = Math.max(1, rows - 2 * OVERLAY_MARGIN);
+	return Math.max(1, Math.min(maxHeight, available));
+}
+
 class FilePeekView implements Component {
 	private tui: TUI;
 	private theme: Theme;
@@ -876,9 +886,25 @@ class FilePeekView implements Component {
 		}
 	}
 
-	private contentHeight(): number {
+	/**
+	 * Rows for code plus which chrome fits. Pi clips an overlay to its maxHeight
+	 * from the bottom, so in very short terminals the footer used to vanish and
+	 * the code area could be cut. Size to the same budget the overlay gets, and
+	 * give up the footer first, then the header.
+	 */
+	private layout(): { height: number; showHeader: boolean; showFooter: boolean } {
 		const rows = this.tui.terminal.rows || 24;
-		return Math.max(4, Math.min(32, rows - 6));
+		const budget = overlayRowBudget(rows);
+		const showHeader = budget >= 2;
+		const showFooter = budget >= 3;
+		const chrome = (showHeader ? 1 : 0) + (showFooter ? 1 : 0);
+		// Leave some of the conversation visible on normal terminals.
+		const preferred = Math.max(4, Math.min(32, rows - 6));
+		return { height: Math.max(1, Math.min(preferred, budget - chrome)), showHeader, showFooter };
+	}
+
+	private contentHeight(): number {
+		return this.layout().height;
 	}
 
 	private ensureVisible(height: number): void {
@@ -927,17 +953,17 @@ class FilePeekView implements Component {
 
 	render(width: number): string[] {
 		const renderWidth = Math.max(1, width);
-		const height = this.contentHeight();
+		const { height, showHeader, showFooter } = this.layout();
 		this.ensureVisible(height);
 
 		const total = this.file.rawLines.length;
 		const gutterWidth = Math.max(1, String(Math.max(1, total)).length);
 		const codeWidth = Math.max(1, renderWidth - gutterWidth - 3);
 		this.left = Math.max(0, Math.min(this.left, Math.max(0, this.maxWidth - codeWidth)));
-		const key = `${renderWidth}:${height}:${this.top}:${this.cursor}:${this.left}`;
+		const key = `${renderWidth}:${height}:${showHeader}:${showFooter}:${this.top}:${this.cursor}:${this.left}`;
 		if (this.cachedKey === key) return this.cachedLines;
 		this.ensureHighlighted(this.top, this.top + height);
-		const lines: string[] = [this.header(renderWidth)];
+		const lines: string[] = showHeader ? [this.header(renderWidth)] : [];
 
 		if (total === 0) {
 			const empty = this.theme.fg("dim", " (empty file)");
@@ -956,7 +982,7 @@ class FilePeekView implements Component {
 			}
 		}
 
-		lines.push(this.footer(renderWidth));
+		if (showFooter) lines.push(this.footer(renderWidth));
 		this.cachedKey = key;
 		this.cachedLines = lines;
 		return lines;
@@ -1030,8 +1056,8 @@ async function openViewer(ctx: ExtensionContext, initial: FileRef): Promise<void
 				overlayOptions: {
 					anchor: "center",
 					width: "92%",
-					maxHeight: "92%",
-					margin: 1,
+					maxHeight: `${OVERLAY_MAX_HEIGHT_PERCENT}%`,
+					margin: OVERLAY_MARGIN,
 				},
 			},
 		);
