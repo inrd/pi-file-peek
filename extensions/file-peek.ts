@@ -10,9 +10,9 @@
  *   /peek last             open the most recent reference
  *   /peek path[:line]      open a file directly
  *
- * Shortcut:
- *   alt+o                  open the recent-reference picker
- *   Override with $FILE_PEEK_SHORTCUT (e.g. "ctrl+shift+o"), or "none" to disable.
+ * Shortcut (opt-in):
+ *   None by default. Set $FILE_PEEK_SHORTCUT (e.g. "ctrl+q") to bind a key to
+ *   the recent-reference picker.
  *
  * Editor selection:
  *   $FILE_PEEK_EDITOR, then $VISUAL, then $EDITOR, then `vim`.
@@ -53,13 +53,6 @@ const MAX_OBSERVED_TOKENS = 500;
 /** Resolved paths observed per tool-result block. */
 const MAX_OBSERVED_PATHS = 300;
 const SOURCE_TOOLS = new Set(["read", "edit", "write"]);
-/**
- * alt+o is unbound in Pi and is delivered by legacy terminals (ESC o) as well
- * as the Kitty protocol. The previous ctrl+shift+o only exists with the Kitty
- * protocol; legacy terminals send plain ctrl+o (Pi's tool-output toggle).
- */
-const DEFAULT_SHORTCUT = "alt+o";
-
 const SHORTCUT_MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
 const SHORTCUT_SPECIAL_KEYS = new Set([
 	"escape", "esc", "enter", "return", "tab", "space", "backspace", "delete", "insert", "clear",
@@ -78,6 +71,15 @@ function isValidShortcut(shortcut: string): boolean {
 	if (!key) return false;
 	if (new Set(parts).size !== parts.length || !parts.every((part) => SHORTCUT_MODIFIERS.has(part))) return false;
 	return key.length === 1 ? /[a-z0-9`\-=[\]\\;',./!@#$%^&*()_+|~{}:<>?]/.test(key) : SHORTCUT_SPECIAL_KEYS.has(key);
+}
+
+type ShortcutSetting = { kind: "none" } | { kind: "key"; key: KeyId } | { kind: "invalid"; value: string };
+
+/** Unset, empty or "none" means no shortcut. */
+function shortcutFromEnv(value: string | undefined): ShortcutSetting {
+	const shortcut = value?.trim().toLowerCase() ?? "";
+	if (shortcut === "" || shortcut === "none") return { kind: "none" };
+	return isValidShortcut(shortcut) ? { kind: "key", key: shortcut as KeyId } : { kind: "invalid", value: shortcut };
 }
 
 type RefSource = "read" | "edit" | "write" | "mention" | "peek";
@@ -1143,14 +1145,16 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	const shortcut = (process.env.FILE_PEEK_SHORTCUT?.trim() || DEFAULT_SHORTCUT).toLowerCase();
-	if (shortcut !== "none" && !isValidShortcut(shortcut)) {
-		console.warn(`[file-peek] Ignoring invalid FILE_PEEK_SHORTCUT "${shortcut}"; using ${DEFAULT_SHORTCUT}.`);
-	}
-	const key = shortcut === "none" || isValidShortcut(shortcut) ? shortcut : DEFAULT_SHORTCUT;
-	if (key !== "none") {
+	// No default key: none is free in Pi, reachable in legacy terminals and
+	// independent of keyboard layout on every platform (alt+o types œ on a
+	// macOS AZERTY keyboard; ctrl+q is Pi's follow-up key on Windows). Pi's
+	// keybindings.json cannot bind extension commands, so offer an opt-in.
+	const shortcut = shortcutFromEnv(process.env.FILE_PEEK_SHORTCUT);
+	if (shortcut.kind === "invalid") {
+		console.warn(`[file-peek] Ignoring invalid FILE_PEEK_SHORTCUT "${shortcut.value}"; no shortcut registered.`);
+	} else if (shortcut.kind === "key") {
 		// Pi reports conflicts with built-in bindings at startup.
-		pi.registerShortcut(key as KeyId, {
+		pi.registerShortcut(shortcut.key, {
 			description: "Peek a recent file reference",
 			handler: async (ctx) => {
 				if (!requireTui(ctx)) return;
@@ -1167,6 +1171,7 @@ export default function filePeekExtension(pi: ExtensionAPI) {
 export const __test = {
 	collectRefs,
 	editorSpec,
+	shortcutFromEnv,
 	FilePeekView,
 	isValidShortcut,
 	overlayRowBudget,

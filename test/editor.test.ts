@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import { __test } from "../extensions/file-peek.ts";
 
-const { editorSpec, isValidShortcut, splitCommandLine } = __test;
+const { editorSpec, isValidShortcut, shortcutFromEnv, splitCommandLine } = __test;
 
 describe("splitCommandLine", () => {
 	const cases: Array<[string, string[]]> = [
@@ -57,6 +57,22 @@ describe("editorSpec", () => {
 	for (const [editor, expected] of cases) {
 		test(editor, () => assert.deepEqual(argv(editor), expected));
 	}
+});
+
+describe("shortcutFromEnv", () => {
+	test("no shortcut unless configured", () => {
+		for (const value of [undefined, "", "  ", "none", "NONE"]) {
+			assert.deepEqual(shortcutFromEnv(value), { kind: "none" }, String(value));
+		}
+	});
+
+	test("configured keys are normalised", () => {
+		assert.deepEqual(shortcutFromEnv(" Ctrl+Q "), { kind: "key", key: "ctrl+q" });
+	});
+
+	test("typos are reported, not registered", () => {
+		assert.deepEqual(shortcutFromEnv("ctrl+qq"), { kind: "invalid", value: "ctrl+qq" });
+	});
 });
 
 describe("isValidShortcut", () => {

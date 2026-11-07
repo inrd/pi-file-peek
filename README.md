@@ -34,24 +34,29 @@ pi -e ./extensions/file-peek.ts
 |---|---|
 | `/peek` | pick from files referenced in this session |
 | `/peek last` | open the most recent reference |
-| `/peek path[:line]` | open a file directly (`~/` is expanded) |
-| `alt+o` | open the recent-reference picker |
+| `/peek path[:line]` | open a file directly (`~/` is expanded, `path#L12` works too) |
 
-### Shortcut
+### Shortcut (optional)
 
-The picker shortcut defaults to `alt+o`, which Pi does not use and which works
-in any terminal. On macOS, set Option to act as Meta ("Use Option as Meta key"
-in Terminal, "Esc+" in iTerm2); Pi's own `alt+…` bindings need the same.
-
-To use another key, or none:
+No key is bound by default. Pi's `keybindings.json` cannot bind extension
+commands, so set `FILE_PEEK_SHORTCUT` to open the picker with a key:
 
 ```bash
-export FILE_PEEK_SHORTCUT="ctrl+shift+o"   # needs a Kitty-protocol terminal
-export FILE_PEEK_SHORTCUT=none
+export FILE_PEEK_SHORTCUT="ctrl+q"
 ```
 
-Pi prints a warning at startup if the chosen key clashes with a built-in
-binding. An unrecognised key name falls back to `alt+o` with a warning.
+Pick a key that Pi does not already use (see `/hotkeys`) and that your
+terminal and keyboard layout actually send:
+
+- `ctrl+q` is free in Pi on macOS and Linux, and works on any layout. On
+  Windows/WSL it is Pi's follow-up key.
+- `alt+…` keys need Option set to act as Meta on macOS ("Use Option as Meta
+  key" in Terminal, "Esc+" in iTerm2); otherwise Option+O types `œ`/`ø`.
+- `ctrl+shift+…` keys need a terminal with the Kitty keyboard protocol;
+  others send the plain `ctrl+…` key.
+
+Pi prints a warning at startup if the key clashes with a built-in binding. An
+unrecognised key name is ignored with a warning.
 
 ### Viewer keys
 
