@@ -23,6 +23,7 @@ import { statSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
@@ -124,6 +125,73 @@ function makeRef(
 	cache?: FileCache,
 ): FileRef | undefined {
 	return refFromAbsolute(resolve(cwd, expandHome(inputPath)), line, source, cwd, cache);
+}
+
+// Mirrors Pi's tool path handling (core/tools/path-utils.ts and
+// utils/paths.ts), which is not exported. Keep in sync if Pi changes it.
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const NARROW_NO_BREAK_SPACE = "\u202F";
+
+/** Convert Git Bash, MSYS, Cygwin, and WSL drive paths for native Windows APIs. */
+function normalizeWindowsShellPath(filePath: string): string {
+	if (!filePath.startsWith("/") || filePath.startsWith("//") || filePath.includes("\\")) return filePath;
+	const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+	if (!match) return filePath;
+	const suffix = match[2]?.replaceAll("/", "\\");
+	return `${match[1].toUpperCase()}:\\${suffix ?? ""}`;
+}
+
+/** Resolve a tool's `path` argument the way the read/edit/write tools do. */
+function resolveToolPath(inputPath: string, cwd: string): string {
+	let normalized = inputPath.replace(UNICODE_SPACES, " ");
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+	if (process.platform === "win32") normalized = normalizeWindowsShellPath(normalized);
+
+	if (normalized === "~") {
+		normalized = homedir();
+	} else if (normalized.startsWith("~/") || (process.platform === "win32" && normalized.startsWith("~\\"))) {
+		normalized = join(homedir(), normalized.slice(2));
+	} else if (/^file:\/\//.test(normalized)) {
+		try {
+			normalized = fileURLToPath(normalized);
+		} catch {
+			// Malformed file URL: fall through and let the existence check fail.
+		}
+	}
+	return resolve(cwd, normalized);
+}
+
+/**
+ * Like Pi's read tool: if the resolved path does not exist, try the macOS
+ * filename variants (screenshot AM/PM spacing, NFD, curly apostrophe).
+ * Harmless for edit/write, whose paths resolve directly.
+ */
+function resolveExistingToolPath(inputPath: string, cwd: string, cache?: FileCache): string {
+	const resolved = resolveToolPath(inputPath, cwd);
+	if (isFileAt(resolved, cache)) return resolved;
+
+	const curly = (path: string) => path.replace(/'/g, "\u2019");
+	const nfd = resolved.normalize("NFD");
+	const variants = [
+		resolved.replace(/ (AM|PM)\./gi, `${NARROW_NO_BREAK_SPACE}$1.`),
+		nfd,
+		curly(resolved),
+		curly(nfd),
+	];
+	for (const variant of variants) {
+		if (variant !== resolved && isFileAt(variant, cache)) return variant;
+	}
+	return resolved;
+}
+
+function makeToolRef(
+	inputPath: string,
+	line: number,
+	source: RefSource,
+	cwd: string,
+	cache?: FileCache,
+): FileRef | undefined {
+	return refFromAbsolute(resolveExistingToolPath(inputPath, cwd, cache), line, source, cwd, cache);
 }
 
 interface RefContext {
@@ -381,7 +449,7 @@ function collectRefs(ctx: ExtensionContext): FileRef[] {
 					const args = block.arguments ?? {};
 					if (typeof args.path !== "string") continue;
 					const offset = typeof args.offset === "number" ? args.offset : 1;
-					const ref = makeRef(
+					const ref = makeToolRef(
 						args.path,
 						block.name === "read" ? offset : 1,
 						block.name as RefSource,
