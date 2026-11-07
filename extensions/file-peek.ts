@@ -307,7 +307,7 @@ function normalizedGap(text: string): string {
 /**
  * Find the file a natural-language line reference belongs to. This handles
  * `path, line 12` and `line 12 of path`; otherwise the caller falls back to
- * the first file mentioned in the same text block.
+ * the file the surrounding prose is about (see `subjectFor`).
  */
 function explicitLineTarget(
 	text: string,
@@ -333,6 +333,21 @@ function explicitLineTarget(
 	return undefined;
 }
 
+/**
+ * The file a loose "at line 12" most likely refers to: the nearest path
+ * mentioned before it in the block, since prose usually introduces a file and
+ * then talks about it. If no path precedes it ("At line 12, `foo.ts` ..."),
+ * use the first path in the block.
+ */
+function subjectFor(start: number, matches: PathMatch[]): FileRef | undefined {
+	let subject: FileRef | undefined;
+	for (const match of matches) {
+		if (match.end > start) break;
+		subject = match.ref;
+	}
+	return subject ?? matches[0]?.ref;
+}
+
 /** Keep offsets stable while ignoring line references inside fenced code. */
 function maskFencedCode(text: string): string {
 	return text.replace(/```[\s\S]*?```/g, (block) => block.replace(/[^\n]/g, " "));
@@ -340,15 +355,10 @@ function maskFencedCode(text: string): string {
 
 /**
  * The agent often writes "Imported at line 12" or "Rendered at line ~106"
- * instead of `path:12`. Attach those numbers to the file the paragraph is
- * about (the first path in the block), unless an explicit path is adjacent.
+ * instead of `path:12`. Attach those numbers to an adjacent explicit path, or
+ * else to the nearest path mentioned before them.
  */
-function scanNaturalLineRefs(
-	text: string,
-	context: RefContext,
-	matches: PathMatch[],
-	subject: FileRef | undefined,
-): FileRef[] {
+function scanNaturalLineRefs(text: string, context: RefContext, matches: PathMatch[]): FileRef[] {
 	const refs: FileRef[] = [];
 	const masked = maskFencedCode(text);
 	const usedRanges: Array<[number, number]> = [];
@@ -357,7 +367,8 @@ function scanNaturalLineRefs(
 		const line = Math.floor(number);
 		if (!Number.isFinite(line) || line < 1) return;
 
-		const target = explicitLineTarget(masked, start, end, matches) ?? (allowSubject ? subject : undefined);
+		const target =
+			explicitLineTarget(masked, start, end, matches) ?? (allowSubject ? subjectFor(start, matches) : undefined);
 		if (!target) return;
 
 		const ref = refFromAbsolute(target.absPath, line, "mention", context.cwd, context.fileCache);
@@ -408,7 +419,7 @@ function scanTextRefs(text: string, context: RefContext): FileRef[] {
 		}
 	}
 
-	refs.push(...scanNaturalLineRefs(text, context, matches, matches[0]?.ref));
+	refs.push(...scanNaturalLineRefs(text, context, matches));
 	return refs;
 }
 
