@@ -19,7 +19,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
@@ -38,6 +38,10 @@ import {
 const MAX_FILE_BYTES = 1_500_000;
 const MAX_FILE_LINES = 12_000;
 const MAX_REFS = 40;
+/** Path-like tokens tried per tool-result block, whether or not they resolve. */
+const MAX_OBSERVED_TOKENS = 500;
+/** Resolved paths observed per tool-result block. */
+const MAX_OBSERVED_PATHS = 300;
 const SOURCE_TOOLS = new Set(["read", "edit", "write"]);
 
 type RefSource = "read" | "edit" | "write" | "mention" | "peek";
@@ -67,12 +71,22 @@ function printableKey(data: string): string | undefined {
 	return undefined;
 }
 
-function isFileAt(absPath: string): boolean {
+/** Cache of absolute path -> "is a regular file", scoped to one scan. */
+type FileCache = Map<string, boolean>;
+
+function isFileAt(absPath: string, cache?: FileCache): boolean {
+	const cached = cache?.get(absPath);
+	if (cached !== undefined) return cached;
+
+	let result = false;
 	try {
-		return existsSync(absPath) && statSync(absPath).isFile();
+		result = statSync(absPath, { throwIfNoEntry: false })?.isFile() ?? false;
 	} catch {
-		return false;
+		// ENOTDIR, EACCES, ... are all "not a file we can show".
+		result = false;
 	}
+	cache?.set(absPath, result);
+	return result;
 }
 
 function expandHome(input: string): string {
@@ -91,8 +105,9 @@ function refFromAbsolute(
 	line: number,
 	source: RefSource,
 	cwd: string,
+	cache?: FileCache,
 ): FileRef | undefined {
-	if (!isFileAt(absPath)) return undefined;
+	if (!isFileAt(absPath, cache)) return undefined;
 	return {
 		absPath,
 		displayPath: displayPath(absPath, cwd),
@@ -101,8 +116,14 @@ function refFromAbsolute(
 	};
 }
 
-function makeRef(inputPath: string, line: number, source: RefSource, cwd: string): FileRef | undefined {
-	return refFromAbsolute(resolve(cwd, expandHome(inputPath)), line, source, cwd);
+function makeRef(
+	inputPath: string,
+	line: number,
+	source: RefSource,
+	cwd: string,
+	cache?: FileCache,
+): FileRef | undefined {
+	return refFromAbsolute(resolve(cwd, expandHome(inputPath)), line, source, cwd, cache);
 }
 
 interface RefContext {
@@ -111,6 +132,8 @@ interface RefContext {
 	bases: string[];
 	/** Bare filenames already seen, e.g. Panel.vue -> absolute path. */
 	byBasename: Map<string, string>;
+	/** Memoized file checks; the same candidates recur across the session. */
+	fileCache: FileCache;
 }
 
 interface PathMatch {
@@ -159,7 +182,7 @@ function resolveTextToken(token: string, line: number, context: RefContext): Fil
 	if (!token.includes("/")) {
 		const known = context.byBasename.get(token);
 		if (known) {
-			const ref = refFromAbsolute(known, line, "mention", context.cwd);
+			const ref = refFromAbsolute(known, line, "mention", context.cwd, context.fileCache);
 			if (ref) return ref;
 		}
 	}
@@ -167,7 +190,13 @@ function resolveTextToken(token: string, line: number, context: RefContext): Fil
 	// Table cells and code snippets often use paths relative to the file being
 	// discussed, or to a project source root rather than the repo root.
 	for (const base of context.bases) {
-		const ref = refFromAbsolute(resolve(base, expandHome(token)), line, "mention", context.cwd);
+		const ref = refFromAbsolute(
+			resolve(base, expandHome(token)),
+			line,
+			"mention",
+			context.cwd,
+			context.fileCache,
+		);
 		if (ref) return ref;
 	}
 	return undefined;
@@ -236,7 +265,7 @@ function scanNaturalLineRefs(
 		const target = explicitLineTarget(masked, start, end, matches) ?? (allowSubject ? subject : undefined);
 		if (!target) return;
 
-		const ref = refFromAbsolute(target.absPath, line, "mention", context.cwd);
+		const ref = refFromAbsolute(target.absPath, line, "mention", context.cwd, context.fileCache);
 		if (!ref) return;
 		refs.push(ref);
 		registerRef(ref, context);
@@ -299,9 +328,17 @@ function observePathText(text: string, context: RefContext): void {
 		/(?:^|[\s`'"([{<|])((?:~|\.{1,2}\/|\/)?[A-Za-z0-9_.@%+\-/]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::(\d+))?(?::\d+)?/g;
 	let match: RegExpExecArray | null;
 	let observed = 0;
-	while ((match = re.exec(text)) !== null && observed < 300) {
+	let attempts = 0;
+	// Cap attempts as well as hits: large rg/ls/log outputs are mostly tokens
+	// that never resolve, and each one costs a stat per candidate base dir.
+	while (
+		(match = re.exec(text)) !== null &&
+		observed < MAX_OBSERVED_PATHS &&
+		attempts < MAX_OBSERVED_TOKENS
+	) {
 		const token = match[1].replace(/^@/, "").replace(/[.,;:]+$/, "");
 		if (!token || token.includes("://") || /^https?$/i.test(token)) continue;
+		attempts++;
 		const ref = resolveTextToken(token, match[2] ? Number(match[2]) : 1, context);
 		if (!ref) continue;
 		registerRef(ref, context);
@@ -312,7 +349,12 @@ function observePathText(text: string, context: RefContext): void {
 function collectRefs(ctx: ExtensionContext): FileRef[] {
 	const refs: FileRef[] = [];
 	const callRefs = new Map<string, FileRef>();
-	const context: RefContext = { cwd: ctx.cwd, bases: [ctx.cwd], byBasename: new Map() };
+	const context: RefContext = {
+		cwd: ctx.cwd,
+		bases: [ctx.cwd],
+		byBasename: new Map(),
+		fileCache: new Map(),
+	};
 
 	for (const entry of ctx.sessionManager.getBranch()) {
 		if (entry.type !== "message") continue;
@@ -339,7 +381,13 @@ function collectRefs(ctx: ExtensionContext): FileRef[] {
 					const args = block.arguments ?? {};
 					if (typeof args.path !== "string") continue;
 					const offset = typeof args.offset === "number" ? args.offset : 1;
-					const ref = makeRef(args.path, block.name === "read" ? offset : 1, block.name as RefSource, ctx.cwd);
+					const ref = makeRef(
+						args.path,
+						block.name === "read" ? offset : 1,
+						block.name as RefSource,
+						ctx.cwd,
+						context.fileCache,
+					);
 					if (ref) {
 						refs.push(ref);
 						registerRef(ref, context);
